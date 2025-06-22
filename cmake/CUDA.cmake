@@ -3,9 +3,23 @@ set(MSG_CUDA_MAP "\n\n"
     "   8.x for Fermi/Kepler          /Maxwell/Pascal,\n"
     "   9.x for       Kepler          /Maxwell/Pascal/Volta,\n"
     "  10.x for       Kepler          /Maxwell/Pascal/Volta/Turing,\n"
-    "  11.x for       Kepler (in part)/Maxwell/Pascal/Volta/Turing/Ampere\n\n"
+    "  11.x for       Kepler (in part)/Maxwell/Pascal/Volta/Turing/Ampere,\n"
+    "  12.x for              Maxwell/Pascal/Volta/Turing/Ampere/Hopper\n\n"
     "Reference https://developer.nvidia.com/cuda-gpus#compute for arch and family name\n\n"
 )
+
+# Ensure CUDA_VERSION is set
+if(NOT DEFINED CUDA_VERSION)
+    if(CMAKE_CUDA_COMPILER_VERSION)
+        set(CUDA_VERSION ${CMAKE_CUDA_COMPILER_VERSION})
+    else()
+        # Fallback to a reasonable default
+        set(CUDA_VERSION "12.0")
+        message(WARNING "CUDA_VERSION not set, using default: ${CUDA_VERSION}")
+    endif()
+endif()
+
+message(STATUS "Using CUDA version: ${CUDA_VERSION}")
 
 add_definitions(-DCUB_IGNORE_DEPRECATED_CPP_DIALECT -DTHRUST_IGNORE_DEPRECATED_CPP_DIALECT)
 
@@ -58,8 +72,13 @@ endif()
 
 if (NOT CUDA_VERSION VERSION_LESS 11.8)
     list(APPEND DEFAULT_CUDA_ARCH "89")
+endif()
+
+# add Hopper support for CUDA >= 12.0
+if (NOT CUDA_VERSION VERSION_LESS 12.0)
     list(APPEND DEFAULT_CUDA_ARCH "90")
 endif()
+
 list(SORT DEFAULT_CUDA_ARCH)
 
 set(CUDA_ARCH "${DEFAULT_CUDA_ARCH}" CACHE STRING "Set GPU architecture (semicolon separated list, e.g. '-DCUDA_ARCH=20;35;60')")
@@ -78,7 +97,13 @@ foreach(CUDA_ARCH_ELEM ${CUDA_ARCH})
         message(FATAL_ERROR "Unsupported CUDA architecture '${CUDA_ARCH_ELEM}' specified.")
     endif()
 
-    if (NOT CUDA_VERSION VERSION_LESS 11.0)
+    if (NOT CUDA_VERSION VERSION_LESS 12.0)
+        if(${CUDA_ARCH_ELEM} LESS 50)
+            message("${MSG_CUDA_MAP}")
+            message(FATAL_ERROR "Unsupported CUDA architecture '${CUDA_ARCH_ELEM}' specified. "
+                                "Use CUDA v11.x maximum, Maxwell (50) was dropped at v12.")
+        endif()
+    elseif (NOT CUDA_VERSION VERSION_LESS 11.0)
         if(${CUDA_ARCH_ELEM} LESS 35)
             message("${MSG_CUDA_MAP}")
             message(FATAL_ERROR "Unsupported CUDA architecture '${CUDA_ARCH_ELEM}' specified. "
@@ -89,6 +114,14 @@ foreach(CUDA_ARCH_ELEM ${CUDA_ARCH})
             message("${MSG_CUDA_MAP}")
             message(FATAL_ERROR "Unsupported CUDA architecture '${CUDA_ARCH_ELEM}' specified. "
                                 "Use CUDA v11.x minimum, Ampere (80) was added at v11.")
+        endif()
+    endif()
+
+    if (CUDA_VERSION VERSION_LESS 12.0)
+        if(NOT ${CUDA_ARCH_ELEM} LESS 90)
+            message("${MSG_CUDA_MAP}")
+            message(FATAL_ERROR "Unsupported CUDA architecture '${CUDA_ARCH_ELEM}' specified. "
+                                "Use CUDA v12.x minimum, Hopper (90) was added at v12.")
         endif()
     endif()
 
@@ -184,6 +217,12 @@ elseif("${CUDA_COMPILER}" STREQUAL "nvcc")
         set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS} "--threads 0")
     endif()
 
+    # Add CUDA 12 specific optimizations
+    if (NOT CUDA_VERSION VERSION_LESS 12.0)
+        add_definitions(-DCUDA_12_OPTIMIZATIONS)
+        message(STATUS "CUDA 12 optimizations enabled")
+    endif()
+
     foreach(CUDA_ARCH_ELEM ${CUDA_ARCH})
         # set flags to create device code for the given architecture
         if("${CUDA_ARCH_ELEM}" STREQUAL "21")
@@ -276,5 +315,28 @@ if("${CUDA_COMPILER}" STREQUAL "clang")
     set_target_properties(xmrig-cu PROPERTIES LINKER_LANGUAGE CXX)
     set_source_files_properties(${CUDA_SOURCES} PROPERTIES LANGUAGE CXX)
 else()
-    cuda_add_library(xmrig-cu STATIC ${CUDA_SOURCES})
+    # Use CMake's first-class CUDA support instead of cuda_add_library
+    add_library(xmrig-cu STATIC ${CUDA_SOURCES})
+    
+    # Convert CUDA_ARCH list to proper format for CUDA_ARCHITECTURES
+    # CUDA_ARCHITECTURES expects compute_XX format, not sm_XX
+    set(CUDA_ARCH_LIST "")
+    foreach(ARCH ${CUDA_ARCH})
+        list(APPEND CUDA_ARCH_LIST "${ARCH}")
+    endforeach()
+    
+    # Set CUDA specific properties
+    set_target_properties(xmrig-cu PROPERTIES 
+        CUDA_SEPARABLE_COMPILATION ON
+        CUDA_ARCHITECTURES "${CUDA_ARCH_LIST}"
+        POSITION_INDEPENDENT_CODE ON
+    )
+    
+    # Set CUDA compiler flags with PIC support
+    set(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS} -Xcompiler -fPIC")
+    if(CUDA_NVCC_FLAGS)
+        set_target_properties(xmrig-cu PROPERTIES 
+            CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS}"
+        )
+    endif()
 endif()

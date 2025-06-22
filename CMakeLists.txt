@@ -1,5 +1,5 @@
-cmake_minimum_required(VERSION 3.5)
-project(xmrig-cuda)
+cmake_minimum_required(VERSION 3.10...3.27)
+project(xmrig-cuda CUDA CXX)
 include(cmake/CUDA-Version.cmake)
 
 
@@ -17,6 +17,10 @@ if (CUDA_VERSION VERSION_LESS 9.0)
     message(STATUS "CUDA ${CUDA_VERSION}: RandomX and KawPow disabled, they do not work with old CUDA")
     option(WITH_RANDOMX  "Enable RandomX algorithms family" OFF)
     option(WITH_KAWPOW   "Enable KawPow algorithms family" OFF)
+elseif (CUDA_VERSION VERSION_GREATER_EQUAL 12.0)
+    message(STATUS "CUDA ${CUDA_VERSION}: All algorithms supported")
+    option(WITH_RANDOMX  "Enable RandomX algorithms family" ON)
+    option(WITH_KAWPOW   "Enable KawPow algorithms family" ON)
 else()
     option(WITH_RANDOMX  "Enable RandomX algorithms family" ON)
     option(WITH_KAWPOW   "Enable KawPow algorithms family" ON)
@@ -98,6 +102,7 @@ if (XMRIG_OS_APPLE)
 endif()
 
 add_library(${CMAKE_PROJECT_NAME} SHARED ${SOURCES})
+set_target_properties(${CMAKE_PROJECT_NAME} PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(${CMAKE_PROJECT_NAME} xmrig-cu ${LIBS})
 
 if (WITH_DRIVER_API AND WIN32)
